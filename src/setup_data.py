@@ -34,11 +34,12 @@ for imgFileA in inputPathA.glob('*'):
         imageBaseName = imgFileA.stem[:-2]
         print(imageBaseName)
         imgFileB = inputPathB / f"{imageBaseName}_B.png"
-
+        
     if imgFileA.is_file() and imgFileB.is_file():
         try:
             modified_B = cv2.imread(str(imgFileB))
-            modified_A = ImgRegistration.registerImage(imgFileA, imgFileB, 1903)
+            # modified_A = ImgRegistration.registerImage_using_Manual_Feature_Extraction(imgFileA, imgFileB, 27500)
+            modified_A = ImgRegistration.registerImage_using_Deep_Feature_Extraction(imgFileA, imgFileB)
             newFileNameA = f"{imageBaseName}_fin_A.png"
             newFileNameB = f"{imageBaseName}_fin_B.png"
             outputFileA = outputPathA / newFileNameA

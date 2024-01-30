@@ -31,8 +31,8 @@ def align_images(image, template, maxFeatures=10500, keepPercent=0.2, debug=Fals
 		matchedVis = cv2.drawMatches(image, kpsA, template, kpsB,
 			matches, None)
 		matchedVis = imutils.resize(matchedVis, width=1000)
-		# cv2.imshow("Matched visuals" , matchedVis)
-		# cv2.waitKey(0)
+		cv2.imshow("Matched visuals" , matchedVis)
+		cv2.waitKey(0)
         
   	# allocate memory for the keypoints (x, y)-coordinates from the top matches -- we'll use these 
     # coordinates to compute our homography matrix
