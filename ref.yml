@@ -1,0 +1,103 @@
+import yaml
+import json
+from elasticsearch import Elasticsearch
+
+class IntentManager:
+    def __init__(self, es_host: str, es_port: int):
+        """Initialize the Elasticsearch client."""
+        self.es = Elasticsearch([{'host': es_host, 'port': es_port}])
+        self.index = 'intents_index'  # Name of the index to store intents data
+
+    def escape_queries(self, intent_body: dict):
+        """
+        Escape any double quotes and problematic characters in the queries to avoid breaking
+        Elasticsearch JSON structure.
+        """
+        queries = intent_body.get('queries', {})
+        
+        # Escape for each query type
+        for query_type in ['elastic_query', 'oracle_query', 'splunk_query']:
+            if query_type in queries:
+                server_name = queries[query_type].get('server_name', '')
+                query = queries[query_type].get('query', '')
+
+                # Ensure the query is properly escaped as a JSON-safe string
+                queries[query_type]['server_name'] = server_name
+                queries[query_type]['query'] = json.dumps(query)[1:-1]  # Escaping quotes but removing extra ones added by json.dumps
+        
+        intent_body['queries'] = queries
+        return intent_body
+
+    def store_intent_to_elastic(self, intent_data: dict):
+        """
+        Store intent data to Elasticsearch. 
+        Assumes the intent_name is present as the key for the document ID.
+        """
+        for intent_name, intent_body in intent_data['intents'].items():
+            # Escape the queries to avoid issues with special characters
+            escaped_intent_body = self.escape_queries(intent_body)
+            
+            # Store each intent under its own document ID (intent_name)
+            self.es.index(index=self.index, id=intent_name, body=escaped_intent_body)
+            print(f"Stored intent: {intent_name} to Elasticsearch.")
+
+    def retrieve_intents_from_elastic(self) -> dict:
+        """
+        Retrieve all intents from Elasticsearch and format them in the YAML structure.
+        Returns the intents as a dictionary in the correct structure.
+        """
+        body = {"query": {"match_all": {}}}
+        res = self.es.search(index=self.index, body=body, size=1000)  # Retrieve all entries
+        intents_data = {'intents': {}}
+        
+        for hit in res['hits']['hits']:
+            intent_name = hit['_id']
+            # Unescape the queries when retrieving
+            intent_body = hit['_source']
+            intent_body = self.unescape_queries(intent_body)
+            intents_data['intents'][intent_name] = intent_body
+        
+        return intents_data
+
+    def unescape_queries(self, intent_body: dict):
+        """
+        Reverse the escaping of queries so that they can be properly represented in YAML.
+        """
+        queries = intent_body.get('queries', {})
+
+        for query_type in ['elastic_query', 'oracle_query', 'splunk_query']:
+            if query_type in queries:
+                # JSON string was stored, convert it back to regular string
+                queries[query_type]['query'] = json.loads(f'"{queries[query_type]["query"]}"')
+
+        intent_body['queries'] = queries
+        return intent_body
+
+    def save_yaml(self, data: dict, file_path: str):
+        """Save the dictionary to a YAML file."""
+        with open(file_path, 'w') as yaml_file:
+            yaml.dump(data, yaml_file, default_flow_style=False, sort_keys=False)
+        print(f"YAML file saved to {file_path}")
+
+    def load_yaml(self, file_path: str) -> dict:
+        """Load data from a YAML file."""
+        with open(file_path, 'r') as yaml_file:
+            return yaml.safe_load(yaml_file)
+
+    def convert_elastic_to_yaml(self, file_path: str):
+        """Retrieve data from Elasticsearch and save it as a YAML file."""
+        intents_data = self.retrieve_intents_from_elastic()
+        self.save_yaml(intents_data, file_path)
+        print(f"Data from Elasticsearch saved to YAML file at {file_path}")
+
+# Example Usage:
+
+# Initialize the IntentManager
+intent_manager = IntentManager(es_host="localhost", es_port=9200)
+
+# Load YAML from file and store it in Elasticsearch
+intents_from_yaml = intent_manager.load_yaml("intents.yml")
+intent_manager.store_intent_to_elastic(intents_from_yaml)
+
+# Retrieve all intents from Elasticsearch and save them back to a YAML file
+intent_manager.convert_elastic_to_yaml("output_intents.yml")
