@@ -1,6 +1,7 @@
 import yaml
 import json
 from elasticsearch import Elasticsearch
+from typing import Dict, Any
 
 class IntentManager:
     def __init__(self, es_host: str, es_port: int):
@@ -8,40 +9,66 @@ class IntentManager:
         self.es = Elasticsearch([{'host': es_host, 'port': es_port}])
         self.index = 'intents_index'  # Name of the index to store intents data
 
-    def escape_queries(self, intent_body: dict):
+    def escape_fields(self, intent_body: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Escape any double quotes and problematic characters in the queries to avoid breaking
-        Elasticsearch JSON structure.
+        Dynamically escape fields in the intent body, specifically 'query', 'response', 
+        and 'follow_ups' if they exist.
         """
+        # Check if 'queries' exists in the intent body
         queries = intent_body.get('queries', {})
         
-        # Escape for each query type
-        for query_type in ['elastic_query', 'oracle_query', 'splunk_query']:
-            if query_type in queries:
-                server_name = queries[query_type].get('server_name', '')
-                query = queries[query_type].get('query', '')
+        # Escape for each query type dynamically if 'query' exists
+        for query_name, query_content in queries.items():
+            if 'query' in query_content:
+                query_content['query'] = json.dumps(query_content['query'])[1:-1]  # Escape special chars
 
-                # Ensure the query is properly escaped as a JSON-safe string
-                queries[query_type]['server_name'] = server_name
-                queries[query_type]['query'] = json.dumps(query)[1:-1]  # Escaping quotes but removing extra ones added by json.dumps
-        
+        # Escape 'response' field if it exists
+        if 'response' in intent_body:
+            intent_body['response'] = json.dumps(intent_body['response'])[1:-1]
+
+        # Escape 'follow_ups' field if it exists
+        if 'follow_ups' in intent_body:
+            intent_body['follow_ups'] = json.dumps(intent_body['follow_ups'])[1:-1]
+
         intent_body['queries'] = queries
         return intent_body
 
-    def store_intent_to_elastic(self, intent_data: dict):
+    def unescape_fields(self, intent_body: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Store intent data to Elasticsearch. 
-        Assumes the intent_name is present as the key for the document ID.
+        Dynamically unescape fields in the intent body, specifically 'query', 'response',
+        and 'follow_ups' if they exist.
         """
-        for intent_name, intent_body in intent_data['intents'].items():
-            # Escape the queries to avoid issues with special characters
-            escaped_intent_body = self.escape_queries(intent_body)
+        queries = intent_body.get('queries', {})
+
+        # Unescape the 'query' field for each query type
+        for query_name, query_content in queries.items():
+            if 'query' in query_content:
+                query_content['query'] = json.loads(f'"{query_content["query"]}"')
+
+        # Unescape 'response' field if it exists
+        if 'response' in intent_body:
+            intent_body['response'] = json.loads(f'"{intent_body["response"]}"')
+
+        # Unescape 'follow_ups' field if it exists
+        if 'follow_ups' in intent_body:
+            intent_body['follow_ups'] = json.loads(f'"{intent_body["follow_ups"]}"')
+
+        intent_body['queries'] = queries
+        return intent_body
+
+    def store_intent_to_elastic(self, intent_data: Dict[str, Any]):
+        """
+        Store intent data to Elasticsearch. Assumes the intent_name is present as the key for the document ID.
+        """
+        for intent_name, intent_body in intent_data.get('intents', {}).items():
+            # Escape relevant fields
+            escaped_intent_body = self.escape_fields(intent_body)
             
             # Store each intent under its own document ID (intent_name)
             self.es.index(index=self.index, id=intent_name, body=escaped_intent_body)
             print(f"Stored intent: {intent_name} to Elasticsearch.")
 
-    def retrieve_intents_from_elastic(self) -> dict:
+    def retrieve_intents_from_elastic(self) -> Dict[str, Any]:
         """
         Retrieve all intents from Elasticsearch and format them in the YAML structure.
         Returns the intents as a dictionary in the correct structure.
@@ -52,34 +79,20 @@ class IntentManager:
         
         for hit in res['hits']['hits']:
             intent_name = hit['_id']
-            # Unescape the queries when retrieving
+            # Unescape relevant fields when retrieving
             intent_body = hit['_source']
-            intent_body = self.unescape_queries(intent_body)
+            intent_body = self.unescape_fields(intent_body)
             intents_data['intents'][intent_name] = intent_body
         
         return intents_data
 
-    def unescape_queries(self, intent_body: dict):
-        """
-        Reverse the escaping of queries so that they can be properly represented in YAML.
-        """
-        queries = intent_body.get('queries', {})
-
-        for query_type in ['elastic_query', 'oracle_query', 'splunk_query']:
-            if query_type in queries:
-                # JSON string was stored, convert it back to regular string
-                queries[query_type]['query'] = json.loads(f'"{queries[query_type]["query"]}"')
-
-        intent_body['queries'] = queries
-        return intent_body
-
-    def save_yaml(self, data: dict, file_path: str):
+    def save_yaml(self, data: Dict[str, Any], file_path: str):
         """Save the dictionary to a YAML file."""
         with open(file_path, 'w') as yaml_file:
             yaml.dump(data, yaml_file, default_flow_style=False, sort_keys=False)
         print(f"YAML file saved to {file_path}")
 
-    def load_yaml(self, file_path: str) -> dict:
+    def load_yaml(self, file_path: str) -> Dict[str, Any]:
         """Load data from a YAML file."""
         with open(file_path, 'r') as yaml_file:
             return yaml.safe_load(yaml_file)
